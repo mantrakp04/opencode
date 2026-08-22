@@ -1,4 +1,5 @@
 import { GlobalBus } from "@/bus/global"
+import { Config } from "@/config/config"
 import { InstanceRef } from "@/effect/instance-ref"
 import { InstanceStore } from "@/project/instance-store"
 import { Provider } from "@/provider/provider"
@@ -33,13 +34,17 @@ export const invalidateProviders = Effect.fn("Server.invalidateProviders")(funct
   matches: (providerID: ProviderV2.ID) => boolean,
 ) {
   const store = yield* InstanceStore.Service
+  const config = yield* Config.Service
   const provider = yield* Provider.Service
   const runs = yield* SessionRunState.Service
+  const contexts = yield* store.list()
+  yield* config.invalidate()
   yield* Effect.forEach(
-    yield* store.list(),
+    contexts,
     (ctx) =>
       Effect.gen(function* () {
         yield* runs.cancelProviders(matches)
+        yield* config.invalidateInstance()
         yield* provider.invalidate()
       }).pipe(Effect.provideService(InstanceRef, ctx)),
     { concurrency: "unbounded", discard: true },
