@@ -128,7 +128,7 @@ export const SettingsProvidersV2: Component<{
     await serverSdk()
       .client.auth.remove({ providerID })
       .then(async () => {
-        await serverSdk().client.global.dispose()
+        await serverSync().refreshProviders()
         showToast({
           variant: "success",
           icon: "circle-check",
