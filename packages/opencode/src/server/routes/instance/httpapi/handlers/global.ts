@@ -94,7 +94,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       )
       if (providerOnly) {
         bridge.fork(
-          invalidateProviders((providerID) => providerChanged(before, result.info, providerID)).pipe(
+          invalidateProviders((providerID) => isProviderChanged(before, result.info, providerID)).pipe(
             Effect.catchCause((cause) => Effect.logWarning("provider invalidation failed", { cause })),
           ),
         )
@@ -170,7 +170,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
   }),
 )
 
-function providerChanged(before: ConfigV1.Info, after: ConfigV1.Info, providerID: ProviderV2.ID) {
+export function isProviderChanged(before: ConfigV1.Info, after: ConfigV1.Info, providerID: ProviderV2.ID) {
   if (!Bun.deepEquals(before.provider?.[providerID], after.provider?.[providerID])) return true
   return providerEnabled(before, providerID) !== providerEnabled(after, providerID)
 }
