@@ -72,6 +72,11 @@ const ref = {
   modelID: ModelV2.ID.make("test-model"),
 }
 
+const otherRef = {
+  providerID: ProviderV2.ID.make("other"),
+  modelID: ModelV2.ID.make("test-model"),
+}
+
 function withSh<A, E, R>(fx: () => Effect.Effect<A, E, R>) {
   return Effect.acquireUseRelease(
     Effect.sync(() => {
@@ -303,6 +308,21 @@ function providerCfg(url: string) {
   }
 }
 
+function twoProviderCfg(url: string) {
+  const config = providerCfg(url)
+  return {
+    ...config,
+    provider: {
+      ...config.provider,
+      other: {
+        ...config.provider.test,
+        id: "other",
+        name: "Other",
+      },
+    },
+  }
+}
+
 const writeText = Effect.fn("test.writeText")(function* (file: string, text: string) {
   const fs = yield* FSUtil.Service
   yield* fs.writeWithDirs(file, text)
@@ -368,14 +388,18 @@ const succeedVoid = (deferred: Deferred.Deferred<void>) => {
   Effect.runSync(Deferred.succeed(deferred, void 0).pipe(Effect.ignore))
 }
 
-const user = Effect.fn("test.user")(function* (sessionID: SessionID, text: string) {
+const user = Effect.fn("test.user")(function* (
+  sessionID: SessionID,
+  text: string,
+  model: { providerID: ProviderV2.ID; modelID: ModelV2.ID } = ref,
+) {
   const session = yield* Session.Service
   const msg = yield* session.updateMessage({
     id: MessageID.ascending(),
     role: "user",
     sessionID,
     agent: "build",
-    model: ref,
+    model,
     time: { created: Date.now() },
   })
   yield* session.updatePart({
@@ -1169,6 +1193,41 @@ it.instance("cancel interrupts loop and resolves with an assistant message", () 
     if (Exit.isSuccess(exit)) {
       expect(exit.value.info.role).toBe("assistant")
     }
+  }),
+)
+
+it.instance("provider changes cancel only sessions using that provider", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(twoProviderCfg)
+    const prompt = yield* SessionPrompt.Service
+    const runs = yield* SessionRunState.Service
+    const sessions = yield* Session.Service
+    const matching = yield* sessions.create({ title: "Matching provider" })
+    const unrelated = yield* sessions.create({ title: "Unrelated provider" })
+    yield* user(matching.id, "hello", ref)
+    yield* user(unrelated.id, "hello", otherRef)
+    yield* llm.hang
+
+    const matchingFiber = yield* prompt.loop({ sessionID: matching.id }).pipe(Effect.forkChild)
+    const unrelatedFiber = yield* prompt.loop({ sessionID: unrelated.id }).pipe(Effect.forkChild)
+    yield* llm.wait(2)
+    yield* waitForBusy(matching.id)
+    yield* waitForBusy(unrelated.id)
+
+    yield* runs.cancelProviders((providerID) => providerID === ref.providerID)
+
+    yield* pollWithTimeout(
+      Effect.gen(function* () {
+        const status = yield* SessionStatus.Service
+        return (yield* status.get(matching.id)).type === "idle" ? (true as const) : undefined
+      }),
+      "matching session was not paused",
+    )
+    expect((yield* (yield* SessionStatus.Service).get(unrelated.id)).type).toBe("busy")
+
+    yield* prompt.cancel(unrelated.id)
+    yield* Fiber.await(matchingFiber)
+    yield* Fiber.await(unrelatedFiber)
   }),
 )
 

@@ -2,9 +2,11 @@ import { Config } from "@/config/config"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { Installation } from "@/installation"
-import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
+import { disposeAllInstancesAndEmitGlobalDisposed, invalidateProviders } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -84,8 +86,21 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
     })
 
     const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx) {
+      const before = yield* config.getGlobal()
       const result = yield* config.updateGlobal(ctx.payload)
-      if (result.changed) bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
+      if (!result.changed) return result.info
+      const providerOnly = Object.keys(ctx.payload).every((key) =>
+        ["provider", "disabled_providers", "enabled_providers"].includes(key),
+      )
+      if (providerOnly) {
+        bridge.fork(
+          invalidateProviders((providerID) => isProviderChanged(before, result.info, providerID)).pipe(
+            Effect.catchCause((cause) => Effect.logWarning("provider invalidation failed", { cause })),
+          ),
+        )
+        return result.info
+      }
+      bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
       return result.info
     })
 
@@ -154,3 +169,14 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       .handleRaw("upgrade", upgradeRaw)
   }),
 )
+
+export function isProviderChanged(before: ConfigV1.Info, after: ConfigV1.Info, providerID: ProviderV2.ID) {
+  if (!Bun.deepEquals(before.provider?.[providerID], after.provider?.[providerID])) return true
+  return providerEnabled(before, providerID) !== providerEnabled(after, providerID)
+}
+
+function providerEnabled(config: ConfigV1.Info, providerID: ProviderV2.ID) {
+  if (config.disabled_providers?.includes(providerID)) return false
+  if (config.enabled_providers && !config.enabled_providers.includes(providerID)) return false
+  return true
+}

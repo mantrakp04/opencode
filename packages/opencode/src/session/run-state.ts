@@ -7,10 +7,13 @@ import { Effect, Latch, Layer, Scope, Context } from "effect"
 import { Session } from "./session"
 import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 
 export interface Interface {
   readonly assertNotBusy: (sessionID: SessionID) => Effect.Effect<void, Session.BusyError>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  readonly cancelProviders: (matches: (providerID: ProviderV2.ID) => boolean) => Effect.Effect<void>
+  readonly setProvider: (sessionID: SessionID, providerID: ProviderV2.ID) => Effect.Effect<void>
   readonly ensureRunning: (
     sessionID: SessionID,
     onInterrupt: Effect.Effect<SessionV1.WithParts>,
@@ -36,6 +39,7 @@ const layer = Layer.effect(
       Effect.fn("SessionRunState.state")(function* () {
         const scope = yield* Scope.Scope
         const runners = new Map<SessionID, Runner.Runner<SessionV1.WithParts>>()
+        const providers = new Map<SessionID, ProviderV2.ID>()
         yield* Effect.addFinalizer(
           Effect.fnUntraced(function* () {
             yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
@@ -43,9 +47,10 @@ const layer = Layer.effect(
               discard: true,
             })
             runners.clear()
+            providers.clear()
           }),
         )
-        return { runners, scope }
+        return { runners, providers, scope }
       }),
     )
 
@@ -59,6 +64,7 @@ const layer = Layer.effect(
       const next = Runner.make<SessionV1.WithParts>(data.scope, {
         onIdle: Effect.gen(function* () {
           data.runners.delete(sessionID)
+          data.providers.delete(sessionID)
           yield* status.set(sessionID, { type: "idle" })
         }),
         onBusy: status.set(sessionID, { type: "busy" }),
@@ -85,6 +91,26 @@ const layer = Layer.effect(
       yield* existing.cancel
     })
 
+    const cancelProviders = Effect.fn("SessionRunState.cancelProviders")(function* (
+      matches: (providerID: ProviderV2.ID) => boolean,
+    ) {
+      const data = yield* InstanceState.get(state)
+      yield* Effect.forEach(
+        [...data.providers.entries()].filter((entry) => matches(entry[1])).map((entry) => entry[0]),
+        cancel,
+        { concurrency: "unbounded", discard: true },
+      )
+    })
+
+    const setProvider = Effect.fn("SessionRunState.setProvider")(function* (
+      sessionID: SessionID,
+      providerID: ProviderV2.ID,
+    ) {
+      const data = yield* InstanceState.get(state)
+      if (!data.runners.has(sessionID)) return
+      data.providers.set(sessionID, providerID)
+    })
+
     const ensureRunning = Effect.fn("SessionRunState.ensureRunning")(function* (
       sessionID: SessionID,
       onInterrupt: Effect.Effect<SessionV1.WithParts>,
@@ -104,7 +130,7 @@ const layer = Layer.effect(
         .pipe(Effect.catchTag("RunnerBusy", () => Effect.fail(busyError(sessionID))))
     })
 
-    return Service.of({ assertNotBusy, cancel, ensureRunning, startShell })
+    return Service.of({ assertNotBusy, cancel, cancelProviders, setProvider, ensureRunning, startShell })
   }),
 )
 

@@ -1168,6 +1168,7 @@ export type DefaultModelError = ModelNotFoundError | NoProvidersError | NoModels
 export type Error = ModelNotFoundError | InitError | NoProvidersError | NoModelsError
 
 export interface Interface {
+  readonly invalidate: () => Effect.Effect<void>
   readonly list: () => Effect.Effect<Record<ProviderV2.ID, Info>>
   readonly getProvider: (providerID: ProviderV2.ID) => Effect.Effect<Info>
   readonly getModel: (providerID: ProviderV2.ID, modelID: ModelV2.ID) => Effect.Effect<Model, ModelNotFoundError>
@@ -1704,6 +1705,8 @@ const layer = Layer.effect(
       }),
     )
 
+    const invalidate = Effect.fn("Provider.invalidate")(() => InstanceState.invalidate(state))
+
     const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
 
     async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
@@ -2015,7 +2018,7 @@ const layer = Layer.effect(
       }
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel })
+    return Service.of({ invalidate, list, getProvider, getModel, getLanguage, closest, getSmallModel, defaultModel })
   }),
 )
 
