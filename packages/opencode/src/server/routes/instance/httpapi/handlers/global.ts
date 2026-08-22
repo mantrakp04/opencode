@@ -2,6 +2,7 @@ import { Config } from "@/config/config"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed, invalidateProviders } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -169,12 +170,12 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
   }),
 )
 
-function providerChanged(before: Config.Info, after: Config.Info, providerID: ProviderV2.ID) {
+function providerChanged(before: ConfigV1.Info, after: ConfigV1.Info, providerID: ProviderV2.ID) {
   if (!Bun.deepEquals(before.provider?.[providerID], after.provider?.[providerID])) return true
   return providerEnabled(before, providerID) !== providerEnabled(after, providerID)
 }
 
-function providerEnabled(config: Config.Info, providerID: ProviderV2.ID) {
+function providerEnabled(config: ConfigV1.Info, providerID: ProviderV2.ID) {
   if (config.disabled_providers?.includes(providerID)) return false
   if (config.enabled_providers && !config.enabled_providers.includes(providerID)) return false
   return true
